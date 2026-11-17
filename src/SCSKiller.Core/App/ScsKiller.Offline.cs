@@ -957,6 +957,7 @@ public sealed partial class ScsKiller
                 if (ProcessTree.Created(p.Pid) is { } at && Ours(p.Pid))
                 {
                     SteamLaunched(g, p.Pid, at, Processes(true), ref steam);
+                    if (!steam) StoreLaunched(g, p.Pid, ref steam);
                     if (steam && ProcessTree.Created(p.Pid) == at)
                     {
                         (pid, created) = (p.Pid, at);
@@ -986,6 +987,9 @@ public sealed partial class ScsKiller
     /// <summary>Elsewhere than on Windows: the process, started at <paramref name="started"/>, is a launch of the game's app by
     /// Steam, a descendant of Steam's reaper for that app.</summary>
     partial void SteamLaunched(Game g, int pid, long started, List<(int Pid, int Parent, string Exe)> all, ref bool yes);
+
+    /// <summary>A process started by a store SCSKiller can't see through Steam; the store's launch variable names it.</summary>
+    partial void StoreLaunched(Game g, int pid, ref bool yes);
 
     internal const string RiskLogLine = "risk=1: recording at the user's own risk";
 

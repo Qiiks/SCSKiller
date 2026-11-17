@@ -1,0 +1,55 @@
+name: linux-test-build
+
+# Fork-only: build the Avalonia app on a hosted Linux runner, with the recorder layer copied from the upstream
+# release. No Windows native build, signing, or release: this is the artifact used to test a source change.
+on:
+  workflow_dispatch:
+  push:
+    branches: [faugus-bind]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.403
+
+      - name: Publish the app
+        run: |
+          dotnet publish src/SCSKiller.Ui/SCSKiller.Ui.csproj -c Release -f net10.0 -r linux-x64 \
+            --self-contained true -p:DebugType=None -p:DebugSymbols=false -o dist/SCSKiller
+
+      - name: Recorder layer from the upstream release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/SCSKiller/native /tmp/scsk
+          gh release download v1.4.8 --repo BlueHeisenberg/SCSKiller \
+            --pattern 'SCSKiller-x86_64.AppImage' --dir /tmp/scsk
+          chmod +x /tmp/scsk/SCSKiller-x86_64.AppImage
+          (cd /tmp/scsk && ./SCSKiller-x86_64.AppImage --appimage-extract >/dev/null)
+          cp -a /tmp/scsk/squashfs-root/usr/bin/native/. dist/SCSKiller/native/
+
+      - name: Smoke
+        run: |
+          test -x dist/SCSKiller/SCSKiller.Ui
+          test -f dist/SCSKiller/native/libVkLayer_scskiller.so
+          test -f dist/SCSKiller/native/VkLayer_scskiller.json
+          du -sh dist/SCSKiller
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SCSKiller-linux-test
+          path: dist/SCSKiller
+          retention-days: 3
+          if-no-files-found: error
