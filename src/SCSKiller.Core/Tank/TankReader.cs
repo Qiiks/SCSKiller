@@ -10,10 +10,10 @@ using SCSKiller.Core.Unreal;
 
 namespace SCSKiller.Core.Tank;
 
-/// <summary>Blizzard's Tank engine (Overwatch) in a static TACT container (<see cref="StaticContainer"/>; the Steam
-/// install; Battle.net's CASC install isn't read). Its shaders are ShaderCode assets: 8 bytes 0xFF, the asset's header,
-/// then a gzip member holding one container (<see cref="Containers"/>). Found by walking every blob, since the root
-/// manifest that names assets is encrypted per build: build 154088 (2.25), 1,050,069 blobs, 321,738 ShaderCode assets,
+/// <summary>Blizzard's Tank engine (Overwatch) in a static TACT container (the Steam install, <see cref="StaticContainer"/>)
+/// or a CASC storage (Battle.net's install, <see cref="CascContainer"/>). Its shaders are ShaderCode assets: 8 bytes 0xFF, the asset's header,
+/// then a gzip member holding one container (<see cref="Containers"/>). Found by walking every blob (or every named CASC
+/// file), since the root manifest that names assets is encrypted per build: build 154088 (2.25), 1,050,069 blobs, 321,738 ShaderCode assets,
 /// 99,504 distinct DirectX 11 shaders (SM 5.0: 88,209 PS, 11,244 VS, 50 CS, 1 GS, no tessellation) and 218,013 DXIL ones
 /// (SM 6, DirectX 12). No shader carries a root signature and the engine builds its own at run time, which only a recording
 /// would show, and a game with anti-cheat is never recorded: the DXIL shaders aren't indexed and DirectX 12 can't be

@@ -80,6 +80,10 @@ internal static unsafe class CascContainer
 
     public static bool IsInstall(string installDir) => RootOf(installDir) != null;
 
+    /// <summary>A .build.info header cell: "Product", or CascLib's typed "Product!STRING:0".</summary>
+    static int Column(string[] columns, string name) =>
+        Array.FindIndex(columns, c => c == name || c.StartsWith(name + "!", StringComparison.Ordinal));
+
     /// <summary>The build identity's Product and Version, from the second line of <c>.build.info</c>; null when it can't be read.</summary>
     public static (string Raw, string Product, string Version)? BuildInfoOf(string installDir)
     {
@@ -91,8 +95,8 @@ internal static unsafe class CascContainer
             if (lines.Length < 2) return null;
             var columns = lines[0].TrimEnd('\r').Split('|');
             var values = lines[1].TrimEnd('\r').Split('|');
-            var product = Array.IndexOf(columns, "Product");
-            var version = Array.IndexOf(columns, "Version");
+            var product = Column(columns, "Product");
+            var version = Column(columns, "Version");
             if (product < 0 || version < 0 || product >= values.Length || version >= values.Length) return null;
             return (text, values[product], values[version]);
         }
