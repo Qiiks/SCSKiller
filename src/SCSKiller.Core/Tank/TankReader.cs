@@ -151,14 +151,16 @@ public sealed class TankReader(string? documents = null) : IEngineReader
                 catch (Exception e) when (e is ArgumentException or IndexOutOfRangeException) { Interlocked.Increment(ref bad); }
             }
         }, n => named = n);
-        var map = shaders.Count == 0 ? null : new ShaderMap(CarvedReader.Sha1Hex($"{CascContainer.BuildInfoOf(game.InstallDir)?.Raw}|{Platform}"),
-            "data/casc", Platform, shaders.Keys.Order(StringComparer.Ordinal).ToList());
-        if (map == null) throw new InvalidDataException($"no DirectX 11 shader in the CASC storage ({named} files, {assets} shader assets)");
-        located[game.Id] = locs.Where(l => shaders.ContainsKey(l.Key)).ToDictionary(l => l.Key, l => l.Value);
+        var kept = locs.Where(l => shaders.ContainsKey(l.Key)).ToDictionary(l => l.Key, l => l.Value, StringComparer.Ordinal);
+        var maps = kept.GroupBy(l => l.Value.Path, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new ShaderMap(CarvedReader.Sha1Hex($"{g.Key}|{Platform}"), g.Key, Platform,
+                g.Select(l => l.Key).Order(StringComparer.Ordinal).ToList())).ToList();
+        if (maps.Count == 0) throw new InvalidDataException($"no DirectX 11 shader in the CASC storage ({named} files, {assets} shader assets)");
+        located[game.Id] = kept;
         log?.Report($"{shaders.Count} DirectX 11 shaders ({string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))}) "
             + $"in {assets} shader assets of {named} CASC files; {dxil} DirectX 12 (DXIL) shaders not indexed"
             + (bad > 0 ? $"; {bad} unparseable" : "") + $" ({sw.Elapsed.TotalSeconds:F1}s)");
-        return new ShaderIndex(ContentHash(game), [Platform], shaders, [map]);
+        return new ShaderIndex(ContentHash(game), [Platform], shaders, maps);
     }
 
     /// <summary>The CASC build's identity: <c>.build.info</c> names the build key and version.</summary>
@@ -180,11 +182,11 @@ public sealed class TankReader(string? documents = null) : IEngineReader
         {
             if (!located.TryGetValue(game.Id, out var cascLocs)) { Index(game, engine, null, ct); cascLocs = located[game.Id]; }
             var keys = sha1s.Where(cascLocs.ContainsKey).Select(s => cascLocs[s].Path).Distinct().ToList();
-            var left = new HashSet<string>(sha1s);
+            var pending = new HashSet<string>(sha1s);
             CascContainer.Read(game.InstallDir, keys, ct, (_, asset) =>
             {
                 foreach (var c in Containers(asset))
-                    if (Convert.ToHexStringLower(SHA1.HashData(c)) is var sha && left.Remove(sha)) sink(sha, c);
+                    if (Convert.ToHexStringLower(SHA1.HashData(c)) is var sha && pending.Remove(sha)) sink(sha, c);
             });
             return;
         }
