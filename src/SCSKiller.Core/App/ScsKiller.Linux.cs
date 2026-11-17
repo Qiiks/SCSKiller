@@ -431,6 +431,14 @@ public sealed partial class ScsKiller
         }
     }
 
+    /// <summary>A Faugus launch sets FAUGUSID in the game's environment; the exe, same-user and start-time checks in
+    /// <see cref="RunningExe"/> still apply.</summary>
+    partial void StoreLaunched(Game g, int pid, ref bool yes)
+    {
+        if (yes || !Mine(pid) || FaugusSource.LaunchVariable(g) is not { } v) return;
+        if (ProcessTree.StartEnvironment(pid, v.Name) == v.Value) yes = true;
+    }
+
     partial void ApplyRewarmService()
     {
         var program = LinuxStartup.ThisProgram(out var refused);

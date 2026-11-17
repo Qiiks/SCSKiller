@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- A Faugus game started from its launcher binds a risk session now: SCSKiller records a game Faugus started outside
+  Steam.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**
