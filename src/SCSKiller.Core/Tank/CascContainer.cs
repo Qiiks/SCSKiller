@@ -5,8 +5,8 @@ namespace SCSKiller.Core.Tank;
 /// <summary>Blizzard's CASC storage, as Overwatch's Battle.net install has it: <c>.build.info</c> and
 /// <c>data/casc/indices</c>, with the assets in <c>data/*.0xx</c>. The ROOT file names only the launcher's files, so the
 /// content manifests (<c>Manifest/*.cmf</c>, per-build keys) are what name the rest; CascLib reads both. Every named file is
-/// opened by its content key (the names are hashes) and the shader assets are the ones that start with the same eight 0xFF
-/// bytes as the Steam install's. Nothing here is written; the storage is opened read-only.</summary>
+/// opened by its name (which for the game's assets is a content key's hex) and the shader assets are the ones that start with
+/// the same eight 0xFF bytes as the Steam install's. Nothing here is written; the storage is opened read-only.</summary>
 internal static unsafe class CascContainer
 {
     public const string BuildInfo = ".build.info";
@@ -33,25 +33,34 @@ internal static unsafe class CascContainer
     }
 
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascOpenStorage([MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint locale, out nint storage);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascOpenStorage([MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint locale, out nint storage);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascCloseStorage(nint storage);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascCloseStorage(nint storage);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
     static extern nint CascFindFirstFile(nint storage, [MarshalAs(UnmanagedType.LPUTF8Str)] string mask, ref FindData data, nint listFile);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascFindNextFile(nint find, ref FindData data);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascFindNextFile(nint find, ref FindData data);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascFindClose(nint find);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascFindClose(nint find);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascOpenFile(nint storage, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, uint locale, uint flags, out nint file);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascOpenFile(nint storage, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, uint locale, uint flags, out nint file);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascCloseFile(nint file);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascCloseFile(nint file);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascGetFileSize64(nint file, out ulong size);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascGetFileSize64(nint file, out ulong size);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascSetFilePointer64(nint file, long distance, out ulong newPosition, uint method);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascSetFilePointer64(nint file, long distance, out ulong newPosition, uint method);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
-    static extern byte CascReadFile(nint file, byte* buffer, uint toRead, out uint read);
+    [return: MarshalAs(UnmanagedType.I1)]
+    static extern bool CascReadFile(nint file, byte* buffer, uint toRead, out uint read);
 
     public static bool IsInstall(string installDir) =>
         OperatingSystem.IsLinux() && File.Exists(Path.Combine(installDir, BuildInfo))
@@ -75,8 +84,8 @@ internal static unsafe class CascContainer
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
     }
 
-    /// <summary>Each named file in the storage whose content starts like a ShaderCode asset, by content key. The game's
-    /// manifests name about a million files; only the shader assets are decoded.</summary>
+    /// <summary>Each named file in the storage whose content starts like a ShaderCode asset, by name. The game's
+    /// manifests name about a million files; only the shader assets are decoded, and only after an eight-byte peek.</summary>
     public static void Walk(string installDir, CancellationToken ct, Action<string, byte[]> asset, Action<int>? progress = null)
     {
         var path = Path.Combine(installDir, "data");
@@ -89,6 +98,7 @@ internal static unsafe class CascContainer
             if (find == 0 || find == -1) throw new IOException("the CASC storage has no file list");
             try
             {
+                Span<byte> head = stackalloc byte[8];
                 var n = 0;
                 do
                 {
@@ -102,7 +112,6 @@ internal static unsafe class CascContainer
                     {
                         if (CascGetFileSize64(file, out var size) && size is >= 16 and <= MaxAsset)
                         {
-                            Span<byte> head = stackalloc byte[8];
                             fixed (byte* h = head)
                                 if (!CascReadFile(file, h, 8, out var got) || got != 8 || head.IndexOfAnyExcept((byte)0xFF) >= 0) continue;
                             var bytes = new byte[(int)size];
@@ -119,7 +128,7 @@ internal static unsafe class CascContainer
         finally { CascCloseStorage(storage); }
     }
 
-    /// <summary>Reads each content key (16 bytes, lowercase hex) again, in one storage.</summary>
+    /// <summary>Reads each named asset again, in one storage.</summary>
     public static void Read(string installDir, IEnumerable<string> names, CancellationToken ct, Action<string, byte[]> sink)
     {
         var path = Path.Combine(installDir, "data");
