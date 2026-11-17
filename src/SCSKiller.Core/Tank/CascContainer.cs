@@ -13,6 +13,7 @@ internal static unsafe class CascContainer
     const int MaxPath = 1024;   // CascPort.h: MAX_PATH is 1024 outside Windows
     const int Md5 = 16;
     const uint LocaleAll = 0xFFFFFFFF;
+    const uint OpenByCKey = 1;   // CascLib.h: CASC_OPEN_BY_CKEY, the name is the 16-byte key itself
     const int MaxAsset = 64 << 20;
 
     [StructLayout(LayoutKind.Sequential, Pack = 0)]
@@ -48,7 +49,7 @@ internal static unsafe class CascContainer
     static extern bool CascFindClose(nint find);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
-    static extern bool CascOpenFile(nint storage, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, uint locale, uint flags, out nint file);
+    static extern bool CascOpenFile(nint storage, byte* ckey, uint locale, uint flags, out nint file);
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
     static extern bool CascCloseFile(nint file);
@@ -61,6 +62,11 @@ internal static unsafe class CascContainer
     [DllImport("libcasc.so", CallingConvention = CallingConvention.Cdecl)]
     [return: MarshalAs(UnmanagedType.I1)]
     static extern bool CascReadFile(nint file, byte* buffer, uint toRead, out uint read);
+
+    static bool OpenByKey(nint storage, ReadOnlySpan<byte> ckey, out nint file)
+    {
+        fixed (byte* ck = ckey) return CascOpenFile(storage, ck, LocaleAll, OpenByCKey, out file);
+    }
 
     public static bool IsInstall(string installDir) =>
         OperatingSystem.IsLinux() && File.Exists(Path.Combine(installDir, BuildInfo))
@@ -84,8 +90,8 @@ internal static unsafe class CascContainer
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
     }
 
-    /// <summary>Each named file in the storage whose content starts like a ShaderCode asset, by name. The game's
-    /// manifests name about a million files; only the shader assets are decoded, and only after an eight-byte peek.</summary>
+    /// <summary>Each locally available file whose content starts like a ShaderCode asset, keyed by its content key.
+    /// The storage names about a million entries; an entry the install doesn't carry locally is skipped unopened.</summary>
     public static void Walk(string installDir, CancellationToken ct, Action<string, byte[]> asset, Action<int>? progress = null)
     {
         var path = Path.Combine(installDir, "data");
@@ -103,11 +109,10 @@ internal static unsafe class CascContainer
                 do
                 {
                     if (++n % 4096 == 0) ct.ThrowIfCancellationRequested();
-                    if (data.FileSize is < 16 or > MaxAsset) continue;
+                    if (data.FileSize is < 16 or > MaxAsset || (data.Flags & 1) == 0) continue;
                     progress?.Invoke(n);
-                    var name = Marshal.PtrToStringUTF8((nint)data.Name);
-                    if (string.IsNullOrEmpty(name)) continue;
-                    if (!CascOpenFile(storage, name, LocaleAll, 0, out var file) || file == 0) continue;
+                    var name = Convert.ToHexStringLower(new ReadOnlySpan<byte>(data.CKey, 16));
+                    if (!OpenByKey(storage, new ReadOnlySpan<byte>(data.CKey, 16), out var file) || file == 0) continue;
                     try
                     {
                         if (CascGetFileSize64(file, out var size) && size is >= 16 and <= MaxAsset)
@@ -139,7 +144,7 @@ internal static unsafe class CascContainer
             foreach (var name in names)
             {
                 ct.ThrowIfCancellationRequested();
-                if (CascOpenFile(storage, name, LocaleAll, 0, out var file) && file != 0)
+                if (OpenByKey(storage, Convert.FromHexString(name), out var file) && file != 0)
                     try
                     {
                         if (CascGetFileSize64(file, out var size) && size is >= 16 and <= MaxAsset)
