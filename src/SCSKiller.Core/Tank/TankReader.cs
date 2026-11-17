@@ -40,20 +40,36 @@ public sealed class TankReader(string? documents = null) : IEngineReader
 
     public EngineInfo? Detect(Game game)
     {
+        if (CascContainer.IsInstall(game.InstallDir) && CascContainer.BuildInfoOf(game.InstallDir) is { Product: "pro" } casc)
+            return new EngineInfo(Family, casc.Version, null, Api(game), false, null);
         var config = StaticContainer.ReadBuildConfig(game.InstallDir);
         if (config.GetValueOrDefault("build-product") != Product || !StaticContainer.Files(game.InstallDir).Any()) return null;
         var version = config.GetValueOrDefault("build-branch")?.Replace('_', '.') is { Length: > 0 } b ? b : config.GetValueOrDefault("build-number") ?? "-";
-        return new EngineInfo(Family, version, null, Api(), false, null);
+        return new EngineInfo(Family, version, null, Api(game), false, null);
     }
 
     /// <summary>The settings file the API comes from: Detect is redone when the game rewrites it.</summary>
     public string DetectStamp(Game game, EngineInfo? engine) =>
-        new FileInfo(SettingsFile) is { Exists: true } f ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "-";
+        SettingsFileOf(game) is { } path && new FileInfo(path) is { Exists: true } f ? $"{f.Length}:{f.LastWriteTimeUtc.Ticks}" : "-";
 
-    string SettingsFile => Path.Combine(documents ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Overwatch", "Settings", "Settings_v0.ini");
+    /// <summary>The game's settings file: the documents folder given, or the host's and a Wine prefix's (Battle.net's
+    /// launcher keeps the game in a prefix the store doesn't name).</summary>
+    string? SettingsFileOf(Game game)
+    {
+        var roots = new List<string>();
+        if (documents != null) roots.Add(documents);
+        else
+        {
+            roots.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            if (GameFiles.PrefixOf(game) is { } pfx && Path.Combine(pfx, "drive_c", "users") is var users && Directory.Exists(users))
+                roots.AddRange(Directory.EnumerateDirectories(users, "*", new EnumerationOptions { IgnoreInaccessible = true })
+                    .Where(d => Path.GetFileName(d) != "Public").Select(d => Path.Combine(d, "Documents")));
+        }
+        return roots.Select(r => Path.Combine(r, "Overwatch", "Settings", "Settings_v0.ini")).FirstOrDefault(File.Exists);
+    }
 
-    string Api() =>
-        Regex.Match(StaticContainer.SmallText(SettingsFile) ?? "", @"^\s*GraphicsAPI\s*=\s*""?(\w+)""?", RegexOptions.Multiline).Groups[1].Value.ToLowerInvariant() switch
+    string Api(Game game) =>
+        Regex.Match(StaticContainer.SmallText(SettingsFileOf(game) ?? "") ?? "", @"^\s*GraphicsAPI\s*=\s*""?(\w+)""?", RegexOptions.Multiline).Groups[1].Value.ToLowerInvariant() switch
         {
             "dx11" => "D3D11",
             "dx12" => "D3D12",
@@ -62,6 +78,7 @@ public sealed class TankReader(string? documents = null) : IEngineReader
 
     public ShaderIndex Index(Game game, EngineInfo engine, IProgress<string>? log, CancellationToken ct)
     {
+        if (CascContainer.IsInstall(game.InstallDir)) return CascIndex(game, log, ct);
         var sw = Stopwatch.StartNew();
         var files = StaticContainer.Files(game.InstallDir).ToList();
         var shaders = new ConcurrentDictionary<string, ShaderInfo>();
@@ -109,6 +126,45 @@ public sealed class TankReader(string? documents = null) : IEngineReader
         return new ShaderIndex(ContentHash(game, files), [Platform], new Dictionary<string, ShaderInfo>(shaders), maps);
     }
 
+    /// <summary>The CASC storage's ShaderCode assets, indexed by content key. Its names are hashes, so the assets are found
+    /// by walking every named file and keeping the ones that start with <see cref="Magic"/>.</summary>
+    ShaderIndex CascIndex(Game game, IProgress<string>? log, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var shaders = new Dictionary<string, ShaderInfo>(StringComparer.Ordinal);
+        var locs = new Dictionary<string, Loc>(StringComparer.Ordinal);
+        long named = 0, assets = 0, dxil = 0, bad = 0;
+        CascContainer.Walk(game.InstallDir, ct, (name, asset) =>
+        {
+            Interlocked.Increment(ref assets);
+            var key = name;
+            foreach (var c in Containers(asset))
+            {
+                if (!Dxbc.Part(c, "DXIL"u8).IsEmpty) { Interlocked.Increment(ref dxil); continue; }
+                var sha = Convert.ToHexStringLower(SHA1.HashData(c));
+                if (!locs.TryAdd(sha, new Loc(key, 0))) continue;
+                try
+                {
+                    if (ShaderContainer.Parse(c, sha, new(0, 0, 0, 0)) is { } info && Planning.Planner.IsD3D11(info))
+                        shaders[sha] = info with { Counts = CarvedReader.Counts(info.Bindings), RootSignature = null };
+                }
+                catch (Exception e) when (e is ArgumentException or IndexOutOfRangeException) { Interlocked.Increment(ref bad); }
+            }
+        }, n => named = n);
+        var map = shaders.Count == 0 ? null : new ShaderMap(CarvedReader.Sha1Hex($"{CascContainer.BuildInfoOf(game.InstallDir)?.Raw}|{Platform}"),
+            "data/casc", Platform, shaders.Keys.Order(StringComparer.Ordinal).ToList());
+        if (map == null) throw new InvalidDataException($"no DirectX 11 shader in the CASC storage ({named} files, {assets} shader assets)");
+        located[game.Id] = locs.Where(l => shaders.ContainsKey(l.Key)).ToDictionary(l => l.Key, l => l.Value);
+        log?.Report($"{shaders.Count} DirectX 11 shaders ({string.Join(", ", shaders.Values.GroupBy(s => s.Stage).OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}"))}) "
+            + $"in {assets} shader assets of {named} CASC files; {dxil} DirectX 12 (DXIL) shaders not indexed"
+            + (bad > 0 ? $"; {bad} unparseable" : "") + $" ({sw.Elapsed.TotalSeconds:F1}s)");
+        return new ShaderIndex(ContentHash(game), [Platform], shaders, [map]);
+    }
+
+    /// <summary>The CASC build's identity: <c>.build.info</c> names the build key and version.</summary>
+    static string ContentHash(Game game) =>
+        CarvedReader.Sha1Hex(CascContainer.BuildInfoOf(game.InstallDir)?.Raw ?? "");
+
     /// <summary>The build's identity (build config) and its data files' <see cref="ContentStamps"/>.</summary>
     static string ContentHash(Game game, IEnumerable<FileInfo> files)
     {
@@ -120,6 +176,18 @@ public sealed class TankReader(string? documents = null) : IEngineReader
     /// <summary>Decodes the blob each shader was found in again; one whose bytes changed since (game patched) is skipped.</summary>
     public void ReadShaders(Game game, EngineInfo engine, IReadOnlySet<string> sha1s, Action<string, byte[]> sink, CancellationToken ct)
     {
+        if (CascContainer.IsInstall(game.InstallDir))
+        {
+            if (!located.TryGetValue(game.Id, out var cascLocs)) { Index(game, engine, null, ct); cascLocs = located[game.Id]; }
+            var keys = sha1s.Where(cascLocs.ContainsKey).Select(s => cascLocs[s].Path).Distinct().ToList();
+            var left = new HashSet<string>(sha1s);
+            CascContainer.Read(game.InstallDir, keys, ct, (_, asset) =>
+            {
+                foreach (var c in Containers(asset))
+                    if (Convert.ToHexStringLower(SHA1.HashData(c)) is var sha && left.Remove(sha)) sink(sha, c);
+            });
+            return;
+        }
         if (!located.TryGetValue(game.Id, out var locs))
         {
             Index(game, engine, null, ct);
