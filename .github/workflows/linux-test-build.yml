@@ -32,6 +32,8 @@ jobs:
           cmake -S /tmp/casclib -B /tmp/casclib-build -DCMAKE_BUILD_TYPE=Release \
             -DCASC_BUILD_SHARED_LIB=ON -DCASC_BUILD_STATIC_LIB=OFF
           cmake --build /tmp/casclib-build -j"$(nproc)"
+          printf '#include "CascLib.h"\n_Static_assert(sizeof(CASC_FIND_DATA) == 1104, "CASC_FIND_DATA layout");\n' > /tmp/casclib/sizes.c
+          gcc -I/tmp/casclib/src -c /tmp/casclib/sizes.c -o /tmp/casclib/sizes.o
 
       - name: Publish the app
         run: |
