@@ -299,7 +299,11 @@ static std::string module_path_uncached(std::string& named) {
         if (!line.compare(0, strlen(own), own)) id = key;
         else if (path_at > 0 && line[path_at] == '/' && !strcasecmp(base_name(line.substr(path_at)).c_str(), name.c_str())) same.push_back(key);
     }
-    if (id.empty() || same.empty()) return "";
+    // Wine loads the PE itself and never maps it under its own name, so no mapping carries that name: the command line,
+    // resolved by wine_real_path(), is the identity, and the armed scskiller.cfg pins the exe's size and mtime. A same-named
+    // mapping that isn't this file is the one case left to refuse.
+    if (same.empty()) return local;
+    if (id.empty()) return "";
     for (auto& k : same)
         if (k != id) return "";
     return local;

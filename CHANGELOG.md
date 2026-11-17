@@ -4,6 +4,11 @@ All notable changes to the SCSKiller app and command line. Versions follow [Sema
 
 ## [Unreleased]
 
+**Fixed on Linux**
+
+- The Vulkan recorder now records a game Wine starts. Wine maps the game's exe anonymously, so the recorder found no
+  path for it and the session recorded nothing.
+
 ## [1.4.8] - 2026-11-15
 
 **New on Windows**
