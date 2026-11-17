@@ -7,7 +7,8 @@ namespace SCSKiller.Core.Warming;
 static partial class WarmHost
 {
     public const string NotSteamError = "compiling on Linux works only for games Steam, Heroic, Lutris or Faugus runs with Wine or Proton",
-        NotSteamVulkanError = "compiling Vulkan games on Linux works only for games Steam runs",
+        NotSteamVulkanError = "compiling Vulkan games on Linux works only for games Steam runs, or games Heroic, Lutris or Faugus runs on NVIDIA's driver",
+        NotSteamVulkanMesaError = "compiling Vulkan games of Heroic, Lutris or Faugus works only on NVIDIA's driver, outside the launcher's Flatpak",
         InFlatpakError = "the Flatpak version of SCSKiller can't compile or record Flatpak Steam games yet",
         FlatpakVulkanError = "compiling Vulkan games from the Flatpak Steam isn't available yet",
         FlatpakSteamMesaError = "compiling games from the Flatpak Steam isn't available yet on AMD or Intel graphics",
@@ -34,7 +35,8 @@ static partial class WarmHost
     public static partial IWarmHost For(Game game, string workDir, GpuInfo gpu, IProgress<string>? log, string? steamRoot, bool vulkan, long? cacheCap, bool mesa,
         IReadOnlyList<(string Name, string Value)>? launchGpu)
     {
-        if (vulkan ? !SteamRuns(game) : !SteamRuns(game) && !LauncherPrefix.Is(game)) throw new NotSupportedException(vulkan ? NotSteamVulkanError : NotSteamError);
+        var denied = vulkan ? VulkanRefusal(game, mesa) : !SteamRuns(game) && !LauncherPrefix.Is(game) ? NotSteamError : null;
+        if (denied != null) throw new NotSupportedException(denied);
         if (FlatpakSteam(game, steamRoot, vulkan, mesa) is { } refused) throw new NotSupportedException(refused);
         ProtonContext? ctx = null;
         LauncherPrefix? launched = null;
@@ -83,8 +85,7 @@ static partial class WarmHost
 
     public static partial string? Refusal(Game game, string? steamRoot, bool vulkan, bool mesa) =>
         FlatpakSteam(game, steamRoot, vulkan, mesa) is { } flatpak ? flatpak
-        : vulkan ? !SteamRuns(game) ? NotSteamVulkanError : null
-        : LauncherPrefix.Is(game) ? Launched(game, steamRoot ?? SteamSource.Root(), mesa, out var off) == null
+        : vulkan ? VulkanRefusal(game, mesa) : LauncherPrefix.Is(game) ? Launched(game, steamRoot ?? SteamSource.Root(), mesa, out var off) == null
             ? off is FlatpakMesaError or InFlatpakLauncherError or FlatpakLauncherNoSystemdError ? off : $"not ready: {off}" : null
         : !SteamRuns(game) ? NotSteamError : Context(game, steamRoot ?? SteamSource.Root(), out var why) == null ? $"not ready: {why}" : null;
 
@@ -166,6 +167,18 @@ static partial class WarmHost
         (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
 
     static bool SteamRuns(Game game) => game.Store == Store.Steam || SteamShortcuts.Is(game.Id);
+
+    /// <summary>A Vulkan compile's refusal: Steam's games anywhere, a launcher's on NVIDIA's driver outside its Flatpak, whose
+    /// sandbox cache the native warm can't write and whose Mesa cache nothing places.</summary>
+    static string? VulkanRefusal(Game game, bool mesa) =>
+        SteamRuns(game) ? null
+        : !LauncherPrefix.Is(game) ? NotSteamVulkanError
+        : mesa || !HostCacheLauncher(game) ? NotSteamVulkanMesaError
+        : null;
+
+    /// <summary>A launcher's game whose driver cache is on the host: not the Flatpak launcher's, whose game reads a cache
+    /// inside its sandbox that the native warm cannot write.</summary>
+    static bool HostCacheLauncher(Game game) => LauncherPrefix.Is(game) && LauncherPrefix.Of(game, out _) is { CacheHome: null };
 
     /// <summary><see cref="ProtonContext.For(Game, string, out string?, IEnumerable{string}?)"/>, for a non-Steam game the
     /// shortcut's as Steam lists it now, still one SCSKiller lists (<see cref="SteamShortcutSource.GameOf"/>) and still

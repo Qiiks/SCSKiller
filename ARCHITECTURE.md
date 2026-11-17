@@ -562,7 +562,10 @@ A D3D12 game under Proton runs on vkd3d-proton, which builds a Vulkan pipeline p
   isn't certain. The native Core reads `~/.steam/root`'s Steam alone.
 - **Vulkan games**, native or under Proton, are warmed natively (`proxy/warm_linux.cpp`, launched as above with no
   Proton): the driver caches both alike, so the warm takes `proton-env --warm`'s variables (`VulkanPlan.AppNameKey`) and
-  its sets go into Steam's files as a D3D12 warm's do. The plan reads SCSKiller's recording, then Steam's archive at the
+  its sets go into Steam's files as a D3D12 warm's do. A Heroic, Lutris or Faugus game on NVIDIA is compiled too, and its
+  sets go into the one file the game was seen holding open, in the folder its variables name (`GameCacheWhere`), after the
+  game's entries, once it has been launched; on Mesa a launcher's Vulkan game isn't compiled, as nothing places its result.
+  The plan reads SCSKiller's recording, then Steam's archive at the
   top of the game's shadercache folder, up to the 4 GiB one cache file indexes (each pipeline charged with what it is
   created from), and replays with `--spirv-val` on the download's shader modules (this PC's are whitelisted), every
   implicit layer off, on the GPU at the app's PCI address. A pipeline using descriptor heaps is a miss: the driver serves

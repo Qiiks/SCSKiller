@@ -41,9 +41,10 @@ public sealed partial class ScsKiller
 
     /// <summary>A Windows game of Heroic, Lutris or Faugus on NVIDIA's driver, outside a Flatpak: its compile goes only into the
     /// game's own file in the driver's default folder, once the game was seen reading it (<see cref="LearnWhere"/>), never
-    /// into a Steam folder, and vkd3d-proton's cache isn't placed.</summary>
+    /// into a Steam folder, and vkd3d-proton's cache isn't placed. Its Vulkan compile lands the same way: the native replayer
+    /// writes the warm's sets under <see cref="Wine.WarmAppName"/> and they are placed into the file the game reads.</summary>
     bool LauncherPlaced(GameState s) =>
-        Vendor.Caps.Profile == NvidiaLinux.Profile && !VulkanRoute(s.Game, s.Engine) && s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+        Vendor.Caps.Profile == NvidiaLinux.Profile && s.Game.ExePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
         && LauncherPrefix.Is(s.Game) && LauncherPrefix.Of(s.Game, out _) is { CacheHome: null };
 
     /// <summary>A launcher's game on NVIDIA's driver in a Flatpak: the sandbox's paths aren't the host's, so its compile stays
@@ -169,7 +170,9 @@ public sealed partial class ScsKiller
     internal static GameCacheWhere Shared(GameCacheWhere where, IReadOnlyDictionary<string, string> env)
     {
         if (where.Set is not { } set) return where;
-        if (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_PATH") is { Length: > 0 }) return where with { Shared = true };
+        if (env.GetValueOrDefault("__GL_SHADER_DISK_CACHE_PATH") is { Length: > 0 } named
+            && Libc.RealPath(named) is { } folder && set.StartsWith(Path.Combine(folder, "GLCache") + "/", StringComparison.Ordinal))
+            return where with { Shared = true };
         var cache = env.GetValueOrDefault("XDG_CACHE_HOME") is { } x && Path.IsPathFullyQualified(x) ? x
             : env.GetValueOrDefault("HOME") is { } h && Path.IsPathFullyQualified(h) ? Path.Combine(h, ".cache") : null;
         return cache == null || Libc.RealPath(Path.Combine(cache, "nvidia", "GLCache")) is not { } root
