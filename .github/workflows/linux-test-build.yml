@@ -1,0 +1,70 @@
+name: linux-test-build
+
+# Fork-only: build the Avalonia app on a hosted Linux runner, with the recorder layer copied from the upstream
+# release and CascLib built from its pinned commit. No Windows native build, signing, or release: this is the
+# artifact used to test a source change.
+on:
+  workflow_dispatch:
+  push:
+    branches: [casc-reader-ci, launcher-vulkan-ci]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.403
+
+      - name: Build CascLib
+        run: |
+          git clone https://github.com/ladislav-zezula/CascLib /tmp/casclib
+          git -C /tmp/casclib checkout 6b889ec8f421cbc9baccec296c582362ab917887
+          cmake -S /tmp/casclib -B /tmp/casclib-build -DCMAKE_BUILD_TYPE=Release \
+            -DCASC_BUILD_SHARED_LIB=ON -DCASC_BUILD_STATIC_LIB=OFF
+          cmake --build /tmp/casclib-build -j"$(nproc)"
+
+      - name: Publish the app
+        run: |
+          dotnet publish src/SCSKiller.Ui/SCSKiller.Ui.csproj -c Release -f net10.0 -r linux-x64 \
+            --self-contained true -p:DebugType=None -p:DebugSymbols=false -o dist/SCSKiller
+          dotnet publish src/SCSKiller.Cli/SCSKiller.Cli.csproj -c Release -f net10.0 -r linux-x64 \
+            --self-contained true -p:DebugType=None -p:DebugSymbols=false -o dist/SCSKiller
+
+      - name: Recorder layer from the upstream release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/SCSKiller/native /tmp/scsk
+          gh release download v1.4.8 --repo BlueHeisenberg/SCSKiller \
+            --pattern 'SCSKiller-x86_64.AppImage' --dir /tmp/scsk
+          chmod +x /tmp/scsk/SCSKiller-x86_64.AppImage
+          (cd /tmp/scsk && ./SCSKiller-x86_64.AppImage --appimage-extract >/dev/null)
+          cp -a /tmp/scsk/squashfs-root/usr/bin/native/. dist/SCSKiller/native/
+
+      - name: Stage CascLib
+        run: cp /tmp/casclib-build/libcasc.so dist/SCSKiller/
+
+      - name: Smoke
+        run: |
+          test -x dist/SCSKiller/SCSKiller.Ui
+          test -f dist/SCSKiller/libcasc.so
+          test -f dist/SCSKiller/native/libVkLayer_scskiller.so
+          test -f dist/SCSKiller/native/VkLayer_scskiller.json
+          du -sh dist/SCSKiller
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SCSKiller-linux-test
+          path: dist/SCSKiller
+          retention-days: 3
+          if-no-files-found: error
