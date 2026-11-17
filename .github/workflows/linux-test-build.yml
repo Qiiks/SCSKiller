@@ -5,7 +5,7 @@ name: linux-test-build
 on:
   workflow_dispatch:
   push:
-    branches: [faugus-bind]
+    branches: [faugus-bind, faugus-vulkan]
 
 permissions:
   contents: read
@@ -27,6 +27,8 @@ jobs:
       - name: Publish the app
         run: |
           dotnet publish src/SCSKiller.Ui/SCSKiller.Ui.csproj -c Release -f net10.0 -r linux-x64 \
+            --self-contained true -p:DebugType=None -p:DebugSymbols=false -o dist/SCSKiller
+          dotnet publish src/SCSKiller.Cli/SCSKiller.Cli.csproj -c Release -f net10.0 -r linux-x64 \
             --self-contained true -p:DebugType=None -p:DebugSymbols=false -o dist/SCSKiller
 
       - name: Recorder layer from the upstream release
