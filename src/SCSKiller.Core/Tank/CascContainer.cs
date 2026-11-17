@@ -68,16 +68,25 @@ internal static unsafe class CascContainer
         fixed (byte* ck = ckey) return CascOpenFile(storage, ck, LocaleAll, OpenByCKey, out file);
     }
 
-    public static bool IsInstall(string installDir) =>
-        OperatingSystem.IsLinux() && File.Exists(Path.Combine(installDir, BuildInfo))
-        && Directory.Exists(Path.Combine(installDir, "data", "casc", "indices"));
+    /// <summary>The game's root: the exe's own folder for a Battle.net registry entry, its parent when a launcher's
+    /// entry names <c>_retail_</c>.</summary>
+    static string? RootOf(string installDir)
+    {
+        if (!OperatingSystem.IsLinux()) return null;
+        bool Has(string dir) => File.Exists(Path.Combine(dir, BuildInfo)) && Directory.Exists(Path.Combine(dir, "data", "casc", "indices"));
+        if (Has(installDir)) return installDir;
+        return Path.GetDirectoryName(installDir) is { } up && Has(up) ? up : null;
+    }
+
+    public static bool IsInstall(string installDir) => RootOf(installDir) != null;
 
     /// <summary>The build identity's Product and Version, from the second line of <c>.build.info</c>; null when it can't be read.</summary>
     public static (string Raw, string Product, string Version)? BuildInfoOf(string installDir)
     {
         try
         {
-            var text = File.ReadAllText(Path.Combine(installDir, BuildInfo));
+            if (RootOf(installDir) is not { } root) return null;
+            var text = File.ReadAllText(Path.Combine(root, BuildInfo));
             var lines = text.Split('\n', 3);
             if (lines.Length < 2) return null;
             var columns = lines[0].TrimEnd('\r').Split('|');
@@ -94,7 +103,7 @@ internal static unsafe class CascContainer
     /// The storage names about a million entries; an entry the install doesn't carry locally is skipped unopened.</summary>
     public static void Walk(string installDir, CancellationToken ct, Action<string, byte[]> asset, Action<int>? progress = null)
     {
-        var path = Path.Combine(installDir, "data");
+        var path = Path.Combine(RootOf(installDir) ?? installDir, "data");
         if (!CascOpenStorage(path, 0, out var storage) || storage == 0)
             throw new IOException("the CASC storage couldn't be opened");
         try
@@ -136,7 +145,7 @@ internal static unsafe class CascContainer
     /// <summary>Reads each named asset again, in one storage.</summary>
     public static void Read(string installDir, IEnumerable<string> names, CancellationToken ct, Action<string, byte[]> sink)
     {
-        var path = Path.Combine(installDir, "data");
+        var path = Path.Combine(RootOf(installDir) ?? installDir, "data");
         if (!CascOpenStorage(path, 0, out var storage) || storage == 0)
             throw new IOException("the CASC storage couldn't be opened");
         try
