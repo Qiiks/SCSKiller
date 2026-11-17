@@ -34,7 +34,7 @@ static partial class WarmHost
     public static partial IWarmHost For(Game game, string workDir, GpuInfo gpu, IProgress<string>? log, string? steamRoot, bool vulkan, long? cacheCap, bool mesa,
         IReadOnlyList<(string Name, string Value)>? launchGpu)
     {
-        if (vulkan ? !SteamRuns(game) : !SteamRuns(game) && !LauncherPrefix.Is(game)) throw new NotSupportedException(vulkan ? NotSteamVulkanError : NotSteamError);
+        if (!SteamRuns(game) && !LauncherPrefix.Is(game)) throw new NotSupportedException(vulkan ? NotSteamVulkanError : NotSteamError);
         if (FlatpakSteam(game, steamRoot, vulkan, mesa) is { } refused) throw new NotSupportedException(refused);
         ProtonContext? ctx = null;
         LauncherPrefix? launched = null;
@@ -83,7 +83,7 @@ static partial class WarmHost
 
     public static partial string? Refusal(Game game, string? steamRoot, bool vulkan, bool mesa) =>
         FlatpakSteam(game, steamRoot, vulkan, mesa) is { } flatpak ? flatpak
-        : vulkan ? !SteamRuns(game) ? NotSteamVulkanError : null
+        : vulkan ? !SteamRuns(game) && !LauncherPrefix.Is(game) ? NotSteamVulkanError : null
         : LauncherPrefix.Is(game) ? Launched(game, steamRoot ?? SteamSource.Root(), mesa, out var off) == null
             ? off is FlatpakMesaError or InFlatpakLauncherError or FlatpakLauncherNoSystemdError ? off : $"not ready: {off}" : null
         : !SteamRuns(game) ? NotSteamError : Context(game, steamRoot ?? SteamSource.Root(), out var why) == null ? $"not ready: {why}" : null;
